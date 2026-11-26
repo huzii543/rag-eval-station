@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>中文笔记 RAG 检索评测台</title>
+<meta name="description" content="纯静态、零后端的中文笔记检索评测台：10 道预置题对 856 个笔记片段现算排名，语义分为离线实算后内嵌（向量本体不出本机），含注入攻击与防御三档演示、hit@3 逐题对照与一致性自检。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="中文笔记 RAG 检索评测台">
+<meta property="og:description" content="点开就能跑的 RAG 检索评测：856 块笔记、10 道题（8 原词 + 2 故意会输的改写探针）、注入攻击/防御三档演示、30/30 一致性自检。零后端、零请求、断网可玩。">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%233C6E8F'/%3E%3Cpath d='M8 11h16M8 16h11M8 21h7' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<a class="skip" href="#ask">跳到提问区</a>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div class="brand-txt">
+      <h1>中文笔记 RAG 检索评测台</h1>
+      <p class="brand-sub">Obsidian 笔记库 · 语义 + 字面双通道 · 纯静态离线实算</p>
+    </div>
+  </div>
+  <div class="scorebar" id="scorebar">
+    <div class="score score-main">
+      <span class="score-label">当前评测集 hit@3</span>
+      <span class="score-value" id="hitScore" aria-live="polite" aria-atomic="true">—</span>
+    </div>
+    <div class="score"><span class="score-label">hit@1</span><span class="score-value sm" id="hit1Score">—</span></div>
+    <div class="score"><span class="score-label">MRR</span><span class="score-value sm" id="mrrScore">—</span></div>
+    <div class="score"><span class="score-label">库规模</span><span class="score-value sm" id="corpusSize">—</span></div>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- 演示开关：两个都是「打开才生效，关掉即回到原始检索」，不影响上面的评测口径 -->
+  <section class="switches" aria-labelledby="sw-h">
+    <h2 class="visually-hidden" id="sw-h">演示开关</h2>
+    <div class="sw">
+      <div class="sw-top">
+        <span class="sw-name">① 注入攻击演示</span>
+        <div class="seg" role="group" aria-label="注入攻击演示">
+          <button type="button" class="segb atkb on" data-atk="off" aria-pressed="true">关</button>
+          <button type="button" class="segb atkb" data-atk="atk" aria-pressed="false">攻击</button>
+          <button type="button" class="segb atkb" data-atk="def" aria-pressed="false">攻击 + 防御</button>
+        </div>
+      </div>
+      <p class="sw-tip">怎么玩（<b>用上方预置题</b>，语义分才是离线真值）：<b>点「攻击」</b> → 看前 3 条里多出来的红框投毒块挤掉了谁 → <b>点「攻击 + 防御」</b> → 三栏并排对比，绿标是那一条被剔后补回来的；哪个组合拦得住什么，全列在下面明细面板里。</p>
+    </div>
+    <div class="sw">
+      <div class="sw-top">
+        <span class="sw-name">② 换我的语料</span>
+        <div class="seg" role="group" aria-label="语料来源">
+          <button type="button" class="segb corpb on" data-corpus="builtin" aria-pressed="true">内嵌语料</button>
+          <button type="button" class="segb corpb" data-corpus="mine" aria-pressed="false">粘贴我的文本</button>
+        </div>
+      </div>
+      <p class="sw-tip">怎么玩：<b>点「粘贴我的文本」</b> → 贴一段话（几百字即可）→ <b>点「用这段检索」</b> → 看它被切成几块、哪块排第一 → <b>点「恢复内嵌语料」</b> 或刷新页面还原。</p>
+    </div>
+  </section>
+
+  <!-- 提问区：整页第一个可操作面 -->
+  <section class="panel askpanel" id="ask" aria-labelledby="ask-h">
+    <h2 class="ph" id="ask-h">提问</h2>
+    <form class="askrow" id="askForm" autocomplete="off">
+      <label class="visually-hidden" for="q">输入问题</label>
+      <input id="q" name="q" type="text" maxlength="120"
+             placeholder="例如：字符串不可变，怎么改其中一个字符">
+      <button type="submit" class="btn primary">检索</button>
+      <button type="button" class="btn" id="resetBtn">清空</button>
+    </form>
+    <p class="channel" id="channelNote">
+      <span class="tag" id="channelTag">通道</span>
+      <span id="channelTxt">—</span>
+    </p>
+
+    <div class="preset-head">
+      <h3 class="sh">预置评测题</h3>
+      <div class="seg" role="group" aria-label="切换评测集">
+        <button type="button" class="segb on" data-set="all">全部 10</button>
+        <button type="button" class="segb" data-set="A">A 原词命中</button>
+        <button type="button" class="segb" data-set="B">B 语义改写</button>
+      </div>
+    </div>
+    <ul class="preset-list" id="presetList" aria-label="预置评测题列表"></ul>
+
+    <div class="runrow">
+      <button type="button" class="btn primary wide" id="runEval">跑一遍评测</button>
+      <span class="muted small" id="runState">尚未运行</span>
+    </div>
+  </section>
+
+  <!-- 检索结果 -->
+  <section class="panel resultspanel" aria-labelledby="res-h">
+    <div class="reshead">
+      <h2 class="ph" id="res-h">检索返回的前 <span id="topKLabel">3</span> 条片段</h2>
+      <span class="muted small" id="resSub">—</span>
+    </div>
+    <div class="trio" id="trioBox" hidden></div>
+    <div id="results" class="results"></div>
+
+    <details class="dropped" id="droppedBox">
+      <summary>
+        被同源去重过滤掉的更高分块 <span class="cnt" id="droppedCnt">0</span>
+      </summary>
+      <div class="dropped-body" id="droppedBody"></div>
+    </details>
+    <details class="dropped" id="blockedBox">
+      <summary>
+        被防御规则拦在候选集外的块 <span class="cnt" id="blockedCnt">0</span>
+      </summary>
+      <div class="dropped-body" id="blockedBody"></div>
+    </details>
+  </section>
+</main>
+
+<!-- 开关 ①：攻击样本与防御规则明细 -->
+<section class="panel evalpanel" id="atkPanel" hidden aria-labelledby="atk-h">
+  <div class="reshead">
+    <h2 class="ph" id="atk-h">注入攻击演示 · 明细</h2>
+    <span class="muted small" id="atkNote"></span>
+  </div>
+  <div class="compare" id="atkStats"></div>
+  <h3 class="sh atk-sub">投毒样本（4 类，共 <span id="atkPoisonN">0</span> 块）</h3>
+  <div class="tablewrap">
+    <table class="tbl">
+      <caption class="visually-hidden">投毒样本与规则拦截情况</caption>
+      <thead><tr><th scope="col">编号</th><th scope="col">攻击类别</th><th scope="col">它想干什么</th>
+        <th scope="col">块数</th><th scope="col">R1 结构检测</th><th scope="col">R5 提问复读</th>
+        <th scope="col">投毒态是否进前 <span class="num" id="atkTopK">3</span></th></tr></thead>
+      <tbody id="atkDocBody"></tbody>
+    </table>
+  </div>
+  <div class="tablewrap">
+    <h3 class="sh atk-sub">防御规则与本库实测（每一种组合都用参考实现复核）</h3>
+    <table class="tbl">
+      <caption class="visually-hidden">防御规则组合扫描</caption>
+      <thead><tr><th scope="col">规则</th><th scope="col">动作</th><th scope="col">来源</th>
+        <th scope="col">拦得住什么 / 天花板</th></tr></thead>
+      <tbody id="atkRuleBody"></tbody>
+    </table>
+  </div>
+  <div class="tablewrap">
+    <h3 class="sh atk-sub">规则组合扫描</h3>
+    <table class="tbl">
+      <caption class="visually-hidden">不同防御组合下的 hit@3 与投毒进榜数</caption>
+      <thead><tr><th scope="col">组合</th><th scope="col">hit@3</th><th scope="col">投毒进榜</th>
+        <th scope="col">剔掉的投毒类别</th><th scope="col">误伤正常块（块/题）</th><th scope="col">是否本页采用</th></tr></thead>
+      <tbody id="atkScanBody"></tbody>
+    </table>
+  </div>
+  <h3 class="sh atk-sub">提问侧攻击（载荷不进索引，只改问题向量）</h3>
+  <div id="atkQuery"></div>
+  <div class="compare" id="atkSelf"></div>
+</section>
+
+<!-- 开关 ②：访客自带语料 -->
+<section class="panel evalpanel" id="corpusPanel" hidden aria-labelledby="corpus-h">
+  <div class="reshead">
+    <h2 class="ph" id="corpus-h">换我的语料 · 临时检索</h2>
+    <span class="muted small" id="corpusState">未启用</span>
+  </div>
+  <p class="privacy">
+    这段文本<b>只留在你当前浏览器页面的内存里</b>：不写 localStorage、不发往任何服务器、不进评测集。
+    <b>刷新即恢复</b>内嵌语料（<span id="privN">—</span> 块那份）。想临时试试检索是怎么切块、怎么排名的，可以贴在这里。
+    唯一会落到存储的是页脚的<b>操作记录</b>：它记时间、动作名，以及<b>你在提问框里输入的原句</b>（换成你自己粘贴的语料时也一样会记）；
+    <b>日志不包含你粘贴的正文</b>——那段文本从不写进 localStorage、也不发往任何地方。
+    这份记录<b>下次打开本页时自动清除，也可一键清空</b>：它写在带时间戳的一次性键里，页面一加载就先删掉上一轮留下的记录。
+    要注意，<b>关闭标签页后日志仍留在浏览器里，直到下次打开本页或你手动清空</b>；共用电脑时点一下「清空记录」更稳妥。
+  </p>
+  <label class="visually-hidden" for="corpusInput">粘贴你自己的文本</label>
+  <textarea id="corpusInput" rows="6" maxlength="4000"
+            placeholder="把你的笔记片段粘在这里（支持 markdown，最多 4000 字）。清洗与分块用的是参考实现同一套规则，本页会逐块自检证明没走样。"></textarea>
+  <div class="runrow">
+    <button type="button" class="btn primary" id="corpusApply">用这段检索</button>
+    <button type="button" class="btn" id="corpusReset">恢复内嵌语料</button>
+    <span class="muted small" id="corpusCharN">0 / 4000 字</span>
+  </div>
+  <div id="corpusChunks"></div>
+</section>
+
+<!-- 评测结果表 -->
+<section class="panel evalpanel" id="evalPanel" hidden aria-labelledby="eval-h">
+  <div class="reshead">
+    <h2 class="ph" id="eval-h">评测结果</h2>
+    <span class="muted small">指标口径：<span id="evalMetricNote"></span></span>
+  </div>
+  <div class="tablewrap">
+    <table class="tbl" id="evalTable">
+      <caption class="visually-hidden">逐题检索名次与返回来源</caption>
+      <thead>
+        <tr><th scope="col">题组</th><th scope="col">问题</th><th scope="col">应命中</th>
+            <th scope="col">实际名次</th><th scope="col">返回的三篇笔记</th></tr>
+      </thead>
+      <tbody id="evalBody"></tbody>
+    </table>
+  </div>
+  <div class="compare" id="compareBox"></div>
+</section>
+
+<footer class="foot">
+  <details class="folding" open>
+    <summary>参数与口径（线上取值，页面不修改）</summary>
+    <div class="fold-body">
+      <dl class="params" id="paramsBox"></dl>
+      <p class="muted small" id="paramNote"></p>
+    </div>
+  </details>
+
+  <details class="folding">
+    <summary>本次会话操作记录（localStorage · 下次打开本页时自动清除，也可一键清空）</summary>
+    <div class="fold-body">
+      <ol class="log" id="logList"></ol>
+      <button type="button" class="btn tiny" id="clearLog">清空记录</button>
+    </div>
+  </details>
+
+  <details class="folding">
+    <summary>这个页面是怎么算出来的 / 数据说明</summary>
+    <div class="fold-body">
+      <ul class="notes" id="notesBox"></ul>
+      <dl class="prov" id="provBox"></dl>
+    </div>
+  </details>
+  <p class="foot-line">
+    零后端 · 零外部请求 · 语料与参数全部内嵌在产物内。语料已做身份脱敏（用户名、机器名、昵称）。
+  </p>
+</footer>
+
+<script src="./data.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
